@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(/home/<агент>/bin/tg-reply owner-agent *)",
+      "Bash(/home/<агент>/bin/tg-watch.sh owner-agent)",
+      "Bash(/home/<агент>/bin/need-human.sh <агент> *)",
+      "Bash(tail -n * /home/<агент>/tg-assistant/var/logs/owner-agent.log)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)"
+    ],
+    "ask": [
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(npm install *)",
+      "Bash(pip install *)",
+      "WebFetch"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(rm -fr *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean *)",
+      "Bash(sudo *)",
+      "Bash(curl *api.telegram.org*)",
+      "Bash(wget *api.telegram.org*)",
+      "Read(~/.tg-session/**)",
+      "Read(~/.agent.env)",
+      "Read(~/.claude/.credentials.json)",
+      "Read(~/.codex/auth.json)",
+      "Read(~/.ssh/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

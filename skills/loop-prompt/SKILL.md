@@ -59,7 +59,7 @@ Rules that decide whether it works:
 - **Poll intervals inside the script:** 30s or more for remote APIs (rate limits), 0.5–1s for local checks.
 - **Survive transient failure.** `|| true` on the network call, so one 500 does not end the watch.
 - **Emit what you'd act on, nothing else.** Every line is a message in the conversation. Monitors that flood are stopped automatically.
-- **`persistent: true`** for a session-length watch; otherwise it dies at `timeout_ms` (default 5 minutes, max 1 hour). `TaskStop` cancels it.
+- **A Monitor has a deadline; never promise indefinite watching.** When it ends, Claude Code sends a notice and the watch must be armed again. The re-arm is part of the plan: state in the reaction "when the monitor ends, arm it again", and write the script so that restarting it loses nothing (it keeps its own last-seen marker, see below). The exact limits change between Claude Code versions: check the Monitor entry of the tools reference before relying on a number. `TaskStop` cancels a watch.
 - **State that must not repeat lives in the script**, not in the model: track the last SHA, the last timestamp, the last comment ID, and emit only the delta. This is the monitor's version of idempotency.
 
 **The monitor only wakes the session — it does not say what to do.** The reaction comes from the conversation, so state it in the same breath as arming the watch: *"when a commit event arrives, run `<check>` and report only failures."* Without that sentence, an event three hours later lands in a session that has forgotten why it was watching.
@@ -82,7 +82,7 @@ while true; do
 done
 ```
 
-Armed as `Monitor({command: <above>, description: "new commits on owner/repo main", persistent: true})`, paired with a stated reaction: *"on each commit event: `git fetch`, run the test and lint scripts against it, and report only what fails; stay quiet on green."*
+Armed as `Monitor({command: <above>, description: "new commits on owner/repo main"})`, paired with a stated reaction: *"on each commit event: `git fetch`, run the test and lint scripts against it, and report only what fails; stay quiet on green. When the monitor ends, arm it again."* The last-seen marker should live in a file, not only in a shell variable, so a re-armed watch continues where the previous one stopped instead of replaying or skipping commits.
 
 For a local repository the same shape is cheaper — poll `git ls-remote origin main` instead of the API, and no token is involved. For a pull request rather than a branch, `gh pr checks <n> --json name,bucket` in the same loop emits each check as it lands and can `break` when none are pending, which ends the watch on its own.
 
@@ -173,7 +173,7 @@ For a monitor, four more:
 10. If the watched thing crashed right now, would the filter emit anything?
 11. Does the script track its own last-seen marker, so one event is not re-emitted every cycle?
 12. Is the reaction stated alongside the watch, so an event arriving hours later still knows what to do?
-13. Is it `persistent: true` if it should outlive five minutes?
+13. Does the plan say what happens when the monitor's deadline ends (re-arm), and does a restarted script continue from a saved marker without loss or replay?
 
 ### 5. Emit
 
@@ -189,7 +189,7 @@ This skill can start the watch itself, and usually should — a user who asked f
 
 | Artifact | How to arm |
 |---|---|
-| Monitor | Call `Monitor` directly with the script, `description`, and `persistent`. State the reaction in the same message. |
+| Monitor | Call `Monitor` directly with the script and `description`. State the reaction, including the re-arm, in the same message. |
 | Fixed-interval loop | `Skill({skill: "loop", args: "15m <prompt>"})` — the bundled skill parses the interval, converts it to cron and schedules it. `CronCreate` directly works too, when the cron expression needs to be exact. |
 | Model-paced loop | `Skill({skill: "loop", args: "<prompt>"})`. Do not call `ScheduleWakeup` by hand: it belongs to a running loop, not to this skill. |
 | `loop.md` | Write the file. Nothing to arm — bare `/loop` picks it up. |
@@ -218,7 +218,7 @@ Verified against the CLI and the official docs; re-check if behavior contradicts
 Monitors:
 
 - **Every stdout line is one event**; lines within 200ms batch into a single notification. Stderr lands in the output file and wakes nothing — merge it with `2>&1` when the failure would otherwise be invisible.
-- **Default `timeout_ms` is 5 minutes, max 1 hour.** `persistent: true` removes the deadline and runs until `TaskStop` or the end of the session.
+- **Every Monitor ends at a deadline** (the current limit is in the Claude Code tools reference, Monitor tool, and can change). The session is told when it ends and must arm it again; a watch nobody re-arms is a silent outage. Do not write "watches around the clock" in any plan.
 - **A flooding monitor is stopped automatically.** Restart it with a tighter filter.
 - **Monitors are never restored on `--resume`**, unlike scheduled tasks. A resumed session has no watch until it is armed again.
 - **A `ws` source** streams WebSocket frames directly, no shell and no polling, when the service offers one.

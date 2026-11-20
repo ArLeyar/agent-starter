@@ -75,6 +75,44 @@ def test_clean_collapses_glued_inword():
     assert t.clean_hallucinations("енитьенитьенить") == "енить"
 
 
+def test_clean_keeps_numbers_and_amounts_intact():
+    src = "Счёт 111111 сумма 1000000"
+    assert t.clean_hallucinations(src) == src
+
+
+def test_clean_still_collapses_repeated_words_next_to_numbers():
+    out = t.clean_hallucinations("сумма 1000000 просила просила просила просила да")
+    assert out == "сумма 1000000 просила да"
+
+
+# --- temp files -----------------------------------------------------------
+
+def test_extract_wav_is_private_and_removed_on_ffmpeg_failure(monkeypatch):
+    import subprocess
+    import pytest
+
+    created = []
+
+    def fake_run(cmd, **kw):
+        created.append(cmd[-2])  # the output path
+        assert (t.os.stat(cmd[-2]).st_mode & 0o777) == 0o600
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(t.subprocess, "run", fake_run)
+    with pytest.raises(subprocess.CalledProcessError):
+        t._extract_wav("in.m4a")
+    assert created and not t.os.path.exists(created[0])
+
+
+def test_extract_wav_returns_private_file(monkeypatch):
+    monkeypatch.setattr(t.subprocess, "run", lambda *a, **k: None)
+    wav = t._extract_wav("in.m4a")
+    try:
+        assert (t.os.stat(wav).st_mode & 0o777) == 0o600
+    finally:
+        t.os.unlink(wav)
+
+
 # --- ffmpeg arg construction ---------------------------------------------
 
 def test_codec_args_lossless_vs_mp3():

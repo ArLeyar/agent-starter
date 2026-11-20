@@ -153,7 +153,9 @@ def clean_hallucinations(text):
     and a word/phrase repeated 3+ times in a row ('просила просила просила ...').
     Two legit repeats are kept; only runaway loops are collapsed."""
     # In-word glued loops: a 2-12 char unit repeated 3+ times inside one token
-    text = re.sub(r"(\S{2,12}?)\1{2,}", r"\1", text)
+    # Letters only: digits are never collapsed, so numbers and amounts stay intact
+    # ("111111" and "1000000" are real data, not a loop).
+    text = re.sub(r"([^\W\d_]{2,12}?)\1{2,}", r"\1", text)
 
     # Consecutive repeated phrases (1-6 words), 3+ occurrences -> keep one
     words = text.split(" ")
@@ -215,11 +217,18 @@ def _af(denoise):
 
 def _extract_wav(path, denoise=False):
     """Decode `path` to a temp 16k mono WAV (for pyannote). Caller owns the returned file."""
-    wav = tempfile.mktemp(suffix=".wav")
-    subprocess.run(
-        ["ffmpeg", "-i", path, "-vn", *_af(denoise), "-ar", "16000", "-ac", "1", wav, "-y"],
-        capture_output=True, check=True,
-    )
+    # mkstemp creates the file atomically with mode 600 (mktemp only picks a name and
+    # leaves a race and a umask-dependent mode in the shared temp dir).
+    fd, wav = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-i", path, "-vn", *_af(denoise), "-ar", "16000", "-ac", "1", wav, "-y"],
+            capture_output=True, check=True,
+        )
+    except BaseException:
+        Path(wav).unlink(missing_ok=True)
+        raise
     return wav
 
 
@@ -663,9 +672,10 @@ def transcribe_ct2(path, lang, model_repo, prompt=None, denoise=False, threads=N
             pass
 
     wav = _extract_wav(path, denoise) if denoise else None
-    model = WhisperModel(model_repo, device="cpu", compute_type="int8",
-                         cpu_threads=threads or os.cpu_count() or 4)
     try:
+        # model load sits inside the try: a failed load must not leak the temp wav
+        model = WhisperModel(model_repo, device="cpu", compute_type="int8",
+                             cpu_threads=threads or os.cpu_count() or 4)
         segments, info = model.transcribe(
             wav or path, language=lang, vad_filter=True,
             initial_prompt=prompt or None,
@@ -1096,14 +1106,24 @@ def main():
         p.error("Use either files or --record, not both")
 
     # Determine audio sources
-    rec_tmp = None
-    if args.record is not None:
-        rec_tmp = tempfile.mktemp(suffix=".wav")
-        record(args.record, rec_tmp)
-        files = [rec_tmp]
-    else:
-        files = args.file
+    # The recording lives in a private (mode 700) directory that is removed in `finally`,
+    # even when transcription fails.
+    rec_dir = None
+    try:
+        if args.record is not None:
+            rec_dir = tempfile.mkdtemp(prefix="transcribe-rec-")
+            rec_tmp = os.path.join(rec_dir, "recording.wav")
+            record(args.record, rec_tmp)
+            files = [rec_tmp]
+        else:
+            files = args.file
+        _process(p, args, lang, files)
+    finally:
+        if rec_dir:
+            shutil.rmtree(rec_dir, ignore_errors=True)
 
+
+def _process(p, args, lang, files):
     if not files:
         p.error("Provide audio file(s) or use --record to record from mic")
     missing = [f for f in files if not Path(f).exists()]
@@ -1141,9 +1161,6 @@ def main():
                 out_path = args.output
             raw, cleaned = transcribe_one(f, args, lang)
             _emit(raw, cleaned, out_path, args)
-
-    if rec_tmp and os.path.exists(rec_tmp):
-        os.unlink(rec_tmp)
 
 
 if __name__ == "__main__":

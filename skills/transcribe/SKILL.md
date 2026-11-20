@@ -1,7 +1,6 @@
 ---
 name: transcribe
 description: Transcribe audio from file or microphone. Russian + IT slang optimized. Auto-chunks long files. Local MLX whisper (default, offline, free, Russian fine-tune), OpenAI gpt-4o-mini-transcribe, or local/cloud speaker diarization. Use when user asks to transcribe, convert speech to text, or record and transcribe audio. ALSO auto-activate (no "transcribe" word needed) whenever the user sends, pastes, or links a path/URL to an audio file — .m4a (most common), .mp3, .wav, .caf, .ogg, .flac — or a video file (.mp4, .mov, .webm, .mkv); a bare audio path/link means "transcribe this".
-allowed-tools: Read, Bash, Glob
 user_invocable: true
 ---
 
@@ -129,6 +128,16 @@ decoded (large-v3 int8, 1.6 GB). Fine for a batch, heavy for one short voice not
 speed over accuracy pass `-m avazir/faster-distil-whisper-large-v3-ru-int8`. The cached
 snapshot is resolved on disk, so the engine runs with no network at all.
 
+**Server default: `cpu`.** On a Linux server pin it once with `TRANSCRIBE_ENGINE=cpu` in
+`~/.env`: audio stays on the machine and nothing is billed. A cloud engine (`openai`,
+`eleven`) is used only after the owner agrees that voice messages leave the server and
+costs appear. `ffmpeg` is installed by the server administrator, not by the agent:
+`sudo apt install -y ffmpeg`. The engine uses all cores while it runs; limit it with the
+service limits `CPUQuota` and `Nice` of the hub unit (kit file `03-telegram-hub.md`),
+not with an environment variable. `--selftest` only checks that the engine loads and
+ffmpeg exists; for the `openai` engine it does not check the key or a real request.
+Prove the setup with a real short voice message sent through the hub.
+
 ### OpenAI cloud (audio leaves machine, costs money)
 
 ```bash
@@ -253,9 +262,11 @@ glued "енитьенитьенить", same phrase across many segments). Mitig
 1. `condition_on_previous_text=False` — loop can't leak into the next 30s window.
 2. VAD chunking trims leading/trailing silence and cuts on silence, so whisper sees
    less dead air to loop on (local engines, when `silero-vad` is available).
-3. `clean_hallucinations()` — collapses in-word glued repeats and word/phrase repeated
-   3+ times in a row (2 legit repeats kept). Applied to raw text; `-o` also saves the raw
-   alongside the cleaned as `.raw.md` for audit.
+3. `clean_hallucinations()` — collapses in-word glued repeats of letters and word/phrase
+   repeated 3+ times in a row (2 legit repeats kept). Digits are never collapsed, so
+   numbers and amounts ("111111", "1000000") stay intact. Applied to raw text; `-o` also
+   saves the raw alongside the cleaned as `.raw.md` for audit. For anything with money
+   or dates still check the key figures against the audio.
 
 `word_timestamps` is deliberately OFF for diarization: mlx-whisper's DTW word alignment
 duplicates text on long/repetitive speech, which hurt transcripts more than word-level
@@ -282,7 +293,7 @@ mp3 for speed/upload size. Large uncompressed files are re-encoded before proces
 - **Python deps**: bundled in the script via PEP 723 — `uv run` installs them on first run
   (mlx-whisper, silero-vad, torch, numpy, soundfile, sounddevice, pyannote.audio, openai).
 - **ffmpeg**: macOS `brew install ffmpeg`, Ubuntu `sudo apt install ffmpeg` (required for all engines; not a pip package)
-- **Linux VPS (no Apple Silicon)**: the default local MLX engine does not run there. Use `-e openai` (needs `OPENAI_API_KEY`), `-e eleven` (needs `ELEVENLABS_API_KEY`) or `-e cpu` (slow, large model download). Pin one with `TRANSCRIBE_ENGINE=` in `~/.env`.
+- **Linux VPS (no Apple Silicon)**: the default local MLX engine does not run there. Default choice is `-e cpu` (local, free, slow, large model download). Cloud engines `-e openai` (needs `OPENAI_API_KEY`) and `-e eleven` (needs `ELEVENLABS_API_KEY`) only with the owner's consent to send audio out. Pin one with `TRANSCRIBE_ENGINE=` in `~/.env`.
 - **Local**: Apple Silicon Mac (M1+). Russian model lives in `~/.cache/whisper-models/` (~3GB).
   To re-create it: `scripts/convert.py --torch-name-or-path antony66/whisper-large-v3-russian
   --mlx-path ~/.cache/whisper-models/whisper-large-v3-russian-mlx` then rename
